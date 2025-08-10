@@ -1,9 +1,10 @@
+<!-- Mangotree - Fully Integrated Optimized + Anti-Cheat -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>MangoTree - Farmer of Mangos</title>
+<title>MangoTree - Farmer of Mangoes (AntiCheat Integrated)</title>
 <style>
 :root{
   --accent:#ffb347;
@@ -11,7 +12,6 @@
   --panel: rgba(255,255,255,0.06);
   --glass: rgba(255,255,255,0.03);
   --ui-shadow: 0 12px 30px rgba(0,0,0,.25);
-  --text-dark:#062f28;
 }
 *{box-sizing:border-box;font-family:Inter, system-ui, -apple-system, 'Trebuchet MS', Roboto, Arial;}
 html,body{height:100%;margin:0;background:#071b18;color:#000;overflow:hidden}
@@ -170,14 +170,16 @@ html,body{height:100%;margin:0;background:#071b18;color:#000;overflow:hidden}
 </audio>
 
 <script>
-/* MangoTree - single file full version
-   You need to place assets in ./img/ and ./audio/
-   Audio accepted formats: .mp3, .ogg, .wav
+/* MangoTree - versão final integrada: otimizações + anti-cheat
+   - Anti-autoclick (1 click/sec + pattern detection)
+   - Stable WebAudio with AudioBuffer effects (no cutting)
+   - Varied click sound (playbackRate / detune / panner)
+   - Engine optimizations: dirty render, capped particles, debounced save
 */
 
 /* ======= CONFIG & BALANCE ======= */
 const IMAGES = ['./img/background-1.jpg','./img/background-2.jpg','./img/background-3.jpg'];
-const SAVE_KEY = 'mangotree_final_save_v1';
+const SAVE_KEY = 'mangotree_final_save_v3';
 let LANG = localStorage.getItem('mango_lang') || 'pt';
 
 const STRINGS = {
@@ -197,7 +199,6 @@ const STRINGS = {
   }
 };
 
-/* Buildings & upgrades (balanced) */
 const BUILDINGS = [
   {id:'picker', name_en:'Picker', name_pt:'Colhedor', baseCost:15, baseCps:0.12, icon:'🧑‍🌾'},
   {id:'farmer', name_en:'Farmhand', name_pt:'Trabalhador', baseCost:120, baseCps:1.4, icon:'👨‍🌾'},
@@ -220,8 +221,14 @@ const ACHIEVEMENTS = [
   {id:'million', name_en:'Mango Magnate', name_pt:'Magnata das Mangas', desc_en:'Harvest 1,000,000', desc_pt:'Colete 1.000.000 mangas', check:s=> s.totalHarvest>=1000000}
 ];
 
-/* Stage thresholds for backgrounds */
 const STAGE_THRESHOLDS = [0, 1000, 20000, 200000];
+
+/* Anti-cheat constants */
+const ANTI_CLICK_MIN_INTERVAL = 1000; // ms between allowed clicks
+const BOT_PATTERN_WINDOW = 5; // how many intervals to track
+const BOT_PATTERN_MAX_VARIATION = 10; // ms tolerance
+const BOT_PATTERN_MAX_INTERVAL = 120; // ms (fast autoclickers)
+const BOT_PENALTY_MS = 0; // penalty duration when detected
 
 /* ======= STATE ======= */
 let state = {
@@ -268,485 +275,225 @@ const volAmbientEl = document.getElementById('volAmbient');
 const volEffectsEl = document.getElementById('volEffects');
 const toggleAmbientBtn = document.getElementById('toggleAmbient');
 
-/* Audio elements and WebAudio graph */
 const audioAmbientEl = document.getElementById('audioAmbient');
 const audioClickEl = document.getElementById('audioClick');
 const audioUpgradeEl = document.getElementById('audioUpgrade');
 const audioAchieveEl = document.getElementById('audioAchieve');
 
-let audioCtx, masterGain, ambientGain, effectsGain;
-let ambientSource;
+/* ======= AUDIO (WebAudio optimized) ======= */
+let audioCtx = null, masterGain=null, ambientGain=null, effectsGain=null;
+let ambientSource = null;
+const audioBuffers = {}; // name -> AudioBuffer
+let audioReady = false;
 
-/* ======= AUDIO SETUP (Web Audio with simple effects) ======= */
-function initAudio(){
+async function decodeArrayBuffer(arr){
+  try{ return await audioCtx.decodeAudioData(arr); }
+  catch(e){
+    // fallback for older implementations
+    return await new Promise((resolve,reject)=> audioCtx.decodeAudioData(arr, resolve, reject));
+  }
+}
+
+async function initAudioOnce(){
+  if(audioReady) return;
   try{
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioCtx.createGain();
     ambientGain = audioCtx.createGain();
     effectsGain = audioCtx.createGain();
-    // connect
-    masterGain.gain.value = 0.9;
-    ambientGain.gain.value = parseFloat(volAmbientEl.value);
-    effectsGain.gain.value = parseFloat(volEffectsEl.value);
+    masterGain.connect(audioCtx.destination);
     ambientGain.connect(masterGain);
     effectsGain.connect(masterGain);
-    masterGain.connect(audioCtx.destination);
+    masterGain.gain.value = 0.95;
+    ambientGain.gain.value = parseFloat(volAmbientEl.value || 0.6);
+    effectsGain.gain.value = parseFloat(volEffectsEl.value || 0.9);
 
-    // create media element source for ambient
-    if(audioAmbientEl && audioAmbientEl.src){
+    try{
       ambientSource = audioCtx.createMediaElementSource(audioAmbientEl);
-      ambientSource.connect(ambientGain);
-      // slight lowpass on ambient for warmth
       const ambientFilter = audioCtx.createBiquadFilter();
-      ambientFilter.type = 'lowpass';
-      ambientFilter.frequency.value = 8000;
+      ambientFilter.type = 'lowpass'; ambientFilter.frequency.value = 8000;
       ambientSource.connect(ambientFilter);
       ambientFilter.connect(ambientGain);
-    }
-    // Attach volumes for effects via simple wrapper playSound()
-  }catch(e){
-    console.warn('AudioContext not available:', e);
-  }
+    }catch(e){ console.warn('Ambient source via WebAudio failed:', e); }
+
+    // try to pre-load effect buffers
+    await Promise.all([
+      loadBufferFromMediaElement(audioClickEl, 'click'),
+      loadBufferFromMediaElement(audioUpgradeEl, 'upgrade'),
+      loadBufferFromMediaElement(audioAchieveEl, 'achieve')
+    ]).catch(e=>{ console.warn('Erro carregando buffers:', e); });
+
+    audioReady = true;
+  }catch(e){ console.warn('initAudioOnce error', e); }
 }
 
-/* Play an effect via AudioContext with envelope/pan */
-function playEffect(elem){
-  if(!elem) return;
-  // if no audioCtx, fallback to element play
-  if(!audioCtx){
-    try{ elem.currentTime = 0; elem.play(); }catch(e){}
+async function loadBufferFromMediaElement(mediaEl, name){
+  const src = (mediaEl.querySelector && mediaEl.querySelector('source') && mediaEl.querySelector('source').src) || mediaEl.src;
+  if(!src) return;
+  try{
+    const res = await fetch(src);
+    const arr = await res.arrayBuffer();
+    audioBuffers[name] = await decodeArrayBuffer(arr);
+  }catch(e){ console.warn('loadBufferFromMediaElement failed', name, e); }
+}
+
+function playBuffer(name){
+  if(!audioCtx || !audioBuffers[name]){
+    // fallback to HTML audio element
+    const el = name === 'click' ? audioClickEl : (name === 'upgrade' ? audioUpgradeEl : audioAchieveEl);
+    if(el){ try{ el.currentTime = 0; el.play().catch(()=>{}); }catch(e){} }
     return;
   }
-  // create media element source on the fly to control playbackRate/pan via cloning
-  // Use HTMLMediaElement directly but route to effectsGain for volume control
   try{
-    const clone = elem.cloneNode(true);
-    clone.preload = 'auto';
-    clone.volume = 1.0;
-    // create source
-    const src = audioCtx.createMediaElementSource(clone);
-    // panner
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuffers[name];
+    // vary pitch slightly
+    src.playbackRate.value = 0.92 + Math.random()*0.18;
+    // small detune for variety (cents)
+    try{ src.detune.value = (Math.random()*200 - 100); }catch(e){}
     const panner = audioCtx.createStereoPanner();
-    panner.pan.value = (Math.random()*2 - 1) * 0.3; // slight stereo spread
-    // filter for small warmth
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 12000;
-    src.connect(filter);
-    filter.connect(panner);
+    panner.pan.value = (Math.random()*2 - 1) * 0.3;
+    src.connect(panner);
     panner.connect(effectsGain);
-    clone.play().catch(()=>{ /* autoplay blocked until gesture */ });
-    // remove element after end
-    clone.onended = ()=>{ try{ clone.remove(); }catch(e){} };
-    // append to DOM temporarily so it can play in some browsers
-    document.body.appendChild(clone);
-  }catch(e){
-    try{ elem.currentTime = 0; elem.play(); }catch(e){}
-  }
+    src.start(0);
+  }catch(e){ console.warn('playBuffer error', e); }
 }
 
-/* Ambient control */
-let ambientPlaying = false;
-function toggleAmbient(){
-  if(!audioAmbientEl) return;
-  if(!audioCtx) initAudio();
-  if(!ambientPlaying){
-    audioAmbientEl.play().catch(()=>{});
-    ambientPlaying = true;
-    toggleAmbientBtn.textContent = LANG === 'en' ? 'Pause' : 'Pausar';
-  } else {
-    audioAmbientEl.pause();
-    ambientPlaying = false;
-    toggleAmbientBtn.textContent = LANG === 'en' ? 'Play' : 'Tocar';
-  }
-}
+function resumeAudioContext(){ if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{}); }
 
-/* volume sliders */
 volAmbientEl.addEventListener('input', ()=>{ if(ambientGain) ambientGain.gain.value = parseFloat(volAmbientEl.value); });
 volEffectsEl.addEventListener('input', ()=>{ if(effectsGain) effectsGain.gain.value = parseFloat(volEffectsEl.value); });
 
-/* start ambient on first user gesture */
-function startAmbientOnFirstGesture(){
-  if(!audioCtx) initAudio();
-  document.removeEventListener('pointerdown', startAmbientOnFirstGesture);
+let ambientStarted = false;
+function startAmbientIfNeeded(){
+  if(ambientStarted) return;
+  initAudioOnce().then(()=>{ resumeAudioContext(); audioAmbientEl.play().catch(()=>{}); ambientStarted = true; toggleAmbientBtn.textContent = LANG === 'en' ? 'Pause' : 'Pausar'; });
 }
-document.addEventListener('pointerdown', startAmbientOnFirstGesture, {once:true});
+
+document.addEventListener('pointerdown', startAmbientIfNeeded, {once:true});
+
+toggleAmbientBtn.addEventListener('click', ()=>{ if(!ambientStarted){ startAmbientIfNeeded(); return; } if(audioAmbientEl.paused){ audioAmbientEl.play().catch(()=>{}); toggleAmbientBtn.textContent = LANG === 'en' ? 'Pause' : 'Pausar'; } else { audioAmbientEl.pause(); toggleAmbientBtn.textContent = LANG === 'en' ? 'Play' : 'Tocar'; } });
 
 /* ======= UTIL ======= */
-function fmt(n){
-  if(n>=1e9) return (n/1e9).toFixed(2)+'B';
-  if(n>=1e6) return (n/1e6).toFixed(2)+'M';
-  if(n>=1e3) return (n/1e3).toFixed(2)+'k';
-  return Math.floor(n).toString();
-}
+function fmt(n){ if(n>=1e9) return (n/1e9).toFixed(2)+'B'; if(n>=1e6) return (n/1e6).toFixed(2)+'M'; if(n>=1e3) return (n/1e3).toFixed(2)+'k'; return Math.floor(n).toString(); }
 
-/* ======= RENDER ======= */
-function renderTrees(){
-  treesEl.innerHTML = '';
-  const count = Math.min(6, 1 + Math.floor(state.totalHarvest / 750));
-  for(let i=0;i<count;i++){
-    const div = document.createElement('div');
-    div.className = 'tree';
-    const size = 46 + (i%3)*8;
-    div.style.fontSize = size + 'px';
-    div.style.left = (i*140) + 'px';
-    div.textContent = '🌳';
-    treesEl.appendChild(div);
-  }
-}
-function renderBuildings(){
-  buildingsList.innerHTML = '';
-  BUILDINGS.forEach(def=>{
-    const have = state.buildings[def.id].count || 0;
-    const cost = getBuildingCost(def, have);
-    const wrapper = document.createElement('div'); wrapper.className = 'building';
-    wrapper.innerHTML = `
-      <div>
-        <div style="font-weight:800">${def.icon} ${LANG==='en'?def.name_en:def.name_pt}</div>
-        <small class="small">${def.baseCps} mangoes/s each</small>
-      </div>
-      <div style="text-align:right">
-        <div class="small">Cost: <strong>${fmt(cost)}</strong></div>
-        <div style="margin-top:8px"><button class="btn" data-buy="${def.id}" data-cost="${cost}">${LANG==='en'?'Buy':'Comprar'}</button></div>
-        <div style="margin-top:8px" class="small">Owned: <strong>${have}</strong></div>
-      </div>
-    `;
-    buildingsList.appendChild(wrapper);
-  });
-}
-function renderUpgrades(){
-  upgradesList.innerHTML = '';
-  UPGRADES.forEach(u=>{
-    if(state.upgrades.includes(u.id)) return;
-    const el = document.createElement('div'); el.className='upgrade';
-    el.innerHTML = `<div style="font-weight:700">${LANG==='en'?u.name_en:u.name_pt}</div><div class="small">${LANG==='en'?u.desc_en:u.desc_pt}</div><div style="margin-top:6px"><button class="btn" data-upgrade="${u.id}" data-cost="${u.cost}">${fmt(u.cost)}</button></div>`;
-    upgradesList.appendChild(el);
-  });
-}
-function renderAchievements(){
-  achList.innerHTML = '';
-  ACHIEVEMENTS.forEach(a=>{
-    const have = state.achievements.includes(a.id);
-    const el = document.createElement('div'); el.className='ach';
-    el.style.opacity = have ? 1 : 0.45;
-    el.innerHTML = `<div style="font-weight:700">${LANG==='en'?a.name_en:a.name_pt}</div><div class="small">${LANG==='en'?a.desc_en:a.desc_pt}</div>`;
-    achList.appendChild(el);
-  });
-}
-function renderHUD(){
-  document.getElementById('mangoCount').textContent = fmt(Math.floor(state.mango));
-  document.getElementById('mps').textContent = computeCps().toFixed(2);
-  document.getElementById('mpc').textContent = Math.floor(state.mpc * state.multiplier);
-  document.getElementById('totalHarvest').textContent = fmt(Math.floor(state.totalHarvest));
-  document.getElementById('ascPoints').textContent = state.ascendPoints;
-  document.getElementById('bgStageText').textContent = STRINGS[LANG].stage(state.stageIndex+1);
-}
-function renderAll(){
-  renderTrees(); renderBuildings(); renderUpgrades(); renderAchievements(); renderHUD(); applyBackground();
-}
+/* ======= RENDER (dirty flag) ======= */
+let renderRequested = false;
+function markDirty(){ if(!renderRequested){ renderRequested = true; requestAnimationFrame(renderAll); } }
+
+function renderTrees(){ treesEl.innerHTML = ''; const count = Math.min(6, 1 + Math.floor(state.totalHarvest / 750)); for(let i=0;i<count;i++){ const div = document.createElement('div'); div.className = 'tree'; const size = 46 + (i%3)*8; div.style.fontSize = size + 'px'; div.style.left = (i*140) + 'px'; div.textContent = '🌳'; treesEl.appendChild(div); } }
+function renderBuildings(){ buildingsList.innerHTML = ''; BUILDINGS.forEach(def=>{ const have = state.buildings[def.id].count || 0; const cost = getBuildingCost(def, have); const wrapper = document.createElement('div'); wrapper.className = 'building'; wrapper.innerHTML = ` <div> <div style="font-weight:800">${def.icon} ${LANG==='en'?def.name_en:def.name_pt}</div> <small class="small">${def.baseCps} mangoes/s each</small> </div> <div style="text-align:right"> <div class="small">Cost: <strong>${fmt(cost)}</strong></div> <div style="margin-top:8px"><button class="btn" data-buy="${def.id}" data-cost="${cost}">${LANG==='en'?'Buy':'Comprar'}</button></div> <div style="margin-top:8px" class="small">Owned: <strong>${have}</strong></div> </div>`; buildingsList.appendChild(wrapper); }); }
+function renderUpgrades(){ upgradesList.innerHTML = ''; UPGRADES.forEach(u=>{ if(state.upgrades.includes(u.id)) return; const el = document.createElement('div'); el.className='upgrade'; el.innerHTML = `<div style="font-weight:700">${LANG==='en'?u.name_en:u.name_pt}</div><div class="small">${LANG==='en'?u.desc_en:u.desc_pt}</div><div style="margin-top:6px"><button class="btn" data-upgrade="${u.id}" data-cost="${u.cost}">${fmt(u.cost)}</button></div>`; upgradesList.appendChild(el); }); }
+function renderAchievements(){ achList.innerHTML = ''; ACHIEVEMENTS.forEach(a=>{ const have = state.achievements.includes(a.id); const el = document.createElement('div'); el.className='ach'; el.style.opacity = have ? 1 : 0.45; el.innerHTML = `<div style="font-weight:700">${LANG==='en'?a.name_en:a.name_pt}</div><div class="small">${LANG==='en'?a.desc_en:a.desc_pt}</div>`; achList.appendChild(el); }); }
+function renderHUD(){ const mps = computeCps(); mangoCountEl.textContent = fmt(Math.floor(state.mango)); mpsEl.textContent = mps.toFixed(2); mpcEl.textContent = Math.floor(state.mpc * state.multiplier); totalHarvestEl.textContent = fmt(Math.floor(state.totalHarvest)); ascEl.textContent = state.ascendPoints; bgStageText.textContent = STRINGS[LANG].stage(state.stageIndex+1); }
+function renderAll(){ renderRequested = false; renderTrees(); renderBuildings(); renderUpgrades(); renderAchievements(); renderHUD(); applyBackground(); }
 
 /* ======= MECHANICS ======= */
-function getBuildingCost(def, have){
-  return Math.floor(def.baseCost * Math.pow(1.15, have));
-}
-function computeCps(){
-  let cps = 0;
-  BUILDINGS.forEach(b=> cps += b.baseCps * (state.buildings[b.id].count || 0));
-  cps *= state.multiplier;
-  return cps;
-}
+function getBuildingCost(def, have){ return Math.floor(def.baseCost * Math.pow(1.15, have)); }
+function computeCps(){ let cps = 0; for(let i=0;i<BUILDINGS.length;i++){ const b = BUILDINGS[i]; cps += b.baseCps * ((state.buildings[b.id] && state.buildings[b.id].count) || 0); } cps *= state.multiplier; return cps; }
 
 /* Purchase handlers */
-document.addEventListener('click', (e)=>{
-  const buy = e.target.closest('[data-buy]');
-  if(buy){
-    const id = buy.getAttribute('data-buy');
-    buyBuilding(id);
-    renderAll();
+document.addEventListener('click', (e)=>{ const buy = e.target.closest('[data-buy]'); if(buy){ const id = buy.getAttribute('data-buy'); buyBuilding(id); markDirty(); } const up = e.target.closest('[data-upgrade]'); if(up){ const id = up.getAttribute('data-upgrade'); buyUpgrade(id); markDirty(); } });
+function buyBuilding(id){ const def = BUILDINGS.find(x=>x.id===id); const have = state.buildings[id].count || 0; const cost = getBuildingCost(def, have); if(state.mango >= cost){ state.mango -= cost; state.buildings[id].count++; playBuffer('upgrade'); flash((LANG==='en' ? def.name_en : def.name_pt) + ' bought'); markDirty(); } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes'); }
+function buyUpgrade(id){ const u = UPGRADES.find(x=>x.id===id); if(!u) return; if(state.mango >= u.cost){ state.mango -= u.cost; state.upgrades.push(u.id); u.apply(state); playBuffer('upgrade'); flash(LANG==='en' ? 'Upgrade acquired' : 'Melhoria adquirida'); markDirty(); } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes'); }
+
+/* ======= Anti-autoclick logic ======= */
+let lastClickTime = 0;
+let clickIntervals = [];
+let antiCheatTimeout = null;
+
+function antiCheatCheck(){
+  const now = performance.now();
+  const interval = lastClickTime ? now - lastClickTime : Infinity; // first click - allow
+  if(lastClickTime){ clickIntervals.push(interval); if(clickIntervals.length > BOT_PATTERN_WINDOW) clickIntervals.shift(); }
+  lastClickTime = now;
+
+  if(clickIntervals.length >= BOT_PATTERN_WINDOW){
+    const avg = clickIntervals.reduce((a,b)=>a+b,0)/clickIntervals.length;
+    const isBotPattern = clickIntervals.every(t => Math.abs(t - avg) < BOT_PATTERN_MAX_VARIATION && t < BOT_PATTERN_MAX_INTERVAL);
+    if(isBotPattern){
+      console.warn('AntiCheat: bot pattern detected', {avg, intervals: clickIntervals.slice()});
+      if(!antiCheatTimeout){ antiCheatTimeout = setTimeout(()=>{ antiCheatTimeout = null; clickIntervals = []; }, BOT_PENALTY_MS); }
+      return {ok:false, reason:'bot_pattern'};
+    }
   }
-  const up = e.target.closest('[data-upgrade]');
-  if(up){
-    const id = up.getAttribute('data-upgrade');
-    buyUpgrade(id);
-    renderAll();
+
+  if(interval < ANTI_CLICK_MIN_INTERVAL){
+    // too fast, but not necessarily a bot pattern - just ignore this single click
+    return {ok:false, reason:'too_fast'};
   }
-});
-function buyBuilding(id){
-  const def = BUILDINGS.find(x=>x.id===id);
-  const have = state.buildings[id].count || 0;
-  const cost = getBuildingCost(def, have);
-  if(state.mango >= cost){
-    state.mango -= cost;
-    state.buildings[id].count++;
-    playEffect(audioUpgradeEl);
-    flash( (LANG==='en' ? def.name_en : def.name_pt) + ' bought' );
-  } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes');
-}
-function buyUpgrade(id){
-  const u = UPGRADES.find(x=>x.id===id);
-  if(!u) return;
-  if(state.mango >= u.cost){
-    state.mango -= u.cost;
-    state.upgrades.push(u.id);
-    u.apply(state);
-    playEffect(audioUpgradeEl);
-    flash(LANG==='en' ? 'Upgrade acquired' : 'Melhoria adquirida');
-  } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes');
+
+  return {ok:true};
 }
 
-/* Click mango */
-mangoBtn.addEventListener('click', (ev)=>{
+function showAntiCheatWarning(reason){
+  if(reason === 'bot_pattern') flash(LANG==='en'?'Autoclicker detected! Temporarily blocked.':'Autoclicker detectado! Bloqueado temporariamente.');
+  else flash(LANG==='en'?'Too fast! Slow down.':'Muito rápido! Respire.');
+}
+
+/* Click mango (uses anti-cheat) */
+const MAX_PARTICLES = 512;
+mangoBtn.addEventListener('click',(ev)=>{
+  const check = antiCheatCheck();
+  if(!check.ok){ showAntiCheatWarning(check.reason); return; }
   const gain = state.mpc * state.multiplier;
   state.mango += gain;
   state.totalHarvest += gain;
-  spawnParticles(ev.clientX, ev.clientY, 14);
-  playClick(ev.clientX);
+  spawnParticles(ev.clientX, ev.clientY, Math.min(MAX_PARTICLES, 12));
+  playBuffer('click');
   checkAchievements();
   maybeSpawnGolden();
-  renderAll();
+  markDirty();
 });
 
 /* Particles */
-function spawnParticles(x,y,n=8){
-  const emojis = ['🥭','🌿','🌸','🍃','🌺','✨'];
-  for(let i=0;i<n;i++){
-    const p = document.createElement('div');
-    p.className = 'particle';
-    p.style.left = x + (Math.random()*120 - 60) + 'px';
-    p.style.top = y + (Math.random()*80 - 40) + 'px';
-    p.textContent = emojis[Math.floor(Math.random()*emojis.length)];
-    p.style.fontSize = (12 + Math.random()*28) + 'px';
-    document.body.appendChild(p);
-    setTimeout(()=>{ p.style.transform = `translate(${Math.random()*80-40}px, ${-140 - Math.random()*80}px) rotate(${Math.random()*360}deg)`; p.style.opacity = 0; }, 20);
-    setTimeout(()=> p.remove(), 1200);
-  }
-}
-
-/* Click sound with small pitch variance & simple envelope */
-function playClick(x){
-  if(audioCtx){
-    // use playEffect which clones audio element and routes through effectsGain
-    playEffect(audioClickEl);
-  } else {
-    try{ audioClickEl.currentTime = 0; audioClickEl.play(); }catch(e){}
-  }
-}
+function spawnParticles(x,y,n=8){ const emojis = ['🥭','🌿','🌸','🍃','🌺','✨']; for(let i=0;i<n;i++){ const p = document.createElement('div'); p.className = 'particle'; p.style.left = (x + (Math.random()*120 - 60)) + 'px'; p.style.top = (y + (Math.random()*80 - 40)) + 'px'; p.textContent = emojis[Math.floor(Math.random()*emojis.length)]; p.style.fontSize = (12 + Math.random()*28) + 'px'; document.body.appendChild(p); requestAnimationFrame(()=>{ p.style.transform = `translate(${Math.random()*80-40}px, ${-140 - Math.random()*80}px) rotate(${Math.random()*360}deg)`; p.style.opacity = 0; }); setTimeout(()=> p.remove(), 1200); } }
 
 /* Golden mango */
-function maybeSpawnGolden(){
-  if(Math.random() < 0.06){
-    goldenEl.style.display = 'block';
-    setTimeout(()=> goldenEl.style.display = 'none', 11000);
-  }
-}
-goldenEl.addEventListener('click', ()=>{
-  const bonus = Math.max(50, Math.floor(state.totalHarvest * 0.02));
-  state.mango += bonus;
-  playEffect(audioAchieveEl);
-  flash((LANG==='en'?'Golden mango! +':'Manga dourada! +') + bonus);
-  goldenEl.style.display = 'none';
-  renderAll();
-});
+function maybeSpawnGolden(){ if(Math.random() < 0.015){ goldenEl.style.display = 'block'; setTimeout(()=> goldenEl.style.display = 'none', 11000); } }
+goldenEl.addEventListener('click', ()=>{ const bonus = Math.max(50, Math.floor(state.totalHarvest * 0.02)); state.mango += bonus; playBuffer('achieve'); flash((LANG==='en'?'Golden mango! +':'Manga dourada! +') + bonus); goldenEl.style.display = 'none'; markDirty(); });
 
 /* ======= Tick & Offline ======= */
 let last = Date.now();
-function tick(){
-  const now = Date.now();
-  const dt = (now - last) / 1000; last = now;
-  const cps = computeCps();
-  const gain = cps * dt;
-  state.mango += gain;
-  state.totalHarvest += gain;
-  checkAchievements();
-  updateStageLogic();
-  renderHUD();
-}
-setInterval(tick, 1000);
+function tick(){ const now = Date.now(); const dt = (now - last) / 1000; last = now; const cps = computeCps(); const gain = cps * dt; if(gain>0){ state.mango += gain; state.totalHarvest += gain; checkAchievements(); updateStageLogic(); markDirty(); } }
+setInterval(tick,2500);
 
 /* Offline gain loader */
-function load(){
-  const raw = localStorage.getItem(SAVE_KEY);
-  if(!raw) return;
-  try{
-    const s = JSON.parse(raw);
-    state = Object.assign(state, s);
-    BUILDINGS.forEach(b => state.buildings[b.id] = state.buildings[b.id] || {count:0});
-    const now = Date.now();
-    const dt = Math.max(0, (now - (state.lastTick||now))/1000);
-    const offlineGain = computeCps() * dt;
-    if(offlineGain > 0){
-      state.mango += offlineGain;
-      state.totalHarvest += offlineGain;
-      flash((LANG==='en'?'Offline gain: ':'Ganho offline: ') + Math.floor(offlineGain));
-    }
-  }catch(e){ console.error(e); }
-}
+function load(){ const raw = localStorage.getItem(SAVE_KEY); if(!raw) return; try{ const s = JSON.parse(raw); state = Object.assign(state, s); BUILDINGS.forEach(b => state.buildings[b.id] = state.buildings[b.id] || {count:0}); const now = Date.now(); const dt = Math.max(0, (now - (state.lastTick||now))/1000); const offlineGain = computeCps() * dt; if(offlineGain > 0){ state.mango += offlineGain; state.totalHarvest += offlineGain; flash((LANG==='en'?'Offline gain: ':'Ganho offline: ') + Math.floor(offlineGain)); } }catch(e){ console.error(e); } }
 
-/* Save & export/import */
-function save(){
-  state.lastTick = Date.now();
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-  flash(LANG==='en' ? 'Saved' : 'Salvo');
-}
-document.getElementById('saveBtn').addEventListener('click', save);
-setInterval(save, 9000);
-
-document.getElementById('exportBtn').addEventListener('click', ()=>{
-  const txt = localStorage.getItem(SAVE_KEY) || JSON.stringify(state);
-  const blob = new Blob([txt], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'mangotree_save.json'; a.click(); URL.revokeObjectURL(url);
-});
-document.getElementById('importBtn').addEventListener('click', ()=>{
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json';
-  inp.onchange = ()=> {
-    const f = inp.files[0];
-    const r = new FileReader();
-    r.onload = ()=> { try{ localStorage.setItem(SAVE_KEY, r.result); flash(LANG==='en'?'Imported':'Importado'); location.reload(); }catch(e){ alert('Invalid file'); } };
-    r.readAsText(f);
-  }; inp.click();
-});
+/* ======= Save & export/import (debounced) ======= */
+function doSave(){ state.lastTick = Date.now(); localStorage.setItem(SAVE_KEY, JSON.stringify(state)); flash(LANG==='en' ? 'Saved' : 'Salvo'); }
+let saveTimer = null; function scheduleSave(){ if(saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(()=>{ doSave(); saveTimer = null; }, 800); }
+saveBtn.addEventListener('click', ()=>{ doSave(); }); setInterval(()=>{ scheduleSave(); }, 9000);
+exportBtn.addEventListener('click', ()=>{ const txt = localStorage.getItem(SAVE_KEY) || JSON.stringify(state); const blob = new Blob([txt], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'mangotree_save.json'; a.click(); URL.revokeObjectURL(url); });
+importBtn.addEventListener('click', ()=>{ const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = ()=>{ const f = inp.files[0]; const r = new FileReader(); r.onload = ()=>{ try{ localStorage.setItem(SAVE_KEY, r.result); flash(LANG==='en'?'Imported':'Importado'); location.reload(); }catch(e){ alert('Invalid file'); } }; r.readAsText(f); }; inp.click(); });
 
 /* ======= Achievements & checks ======= */
-function checkAchievements(){
-  ACHIEVEMENTS.forEach(a=>{
-    if(!state.achievements.includes(a.id) && a.check(state)){
-      state.achievements.push(a.id);
-      playEffect(audioAchieveEl);
-      flash((LANG==='en'?a.name_en:a.name_pt) + ' unlocked!');
-    }
-  });
-}
+function checkAchievements(){ ACHIEVEMENTS.forEach(a=>{ if(!state.achievements.includes(a.id) && a.check(state)){ state.achievements.push(a.id); playBuffer('achieve'); flash((LANG==='en'?a.name_en:a.name_pt) + ' unlocked!'); markDirty(); } }); }
 
 /* ======= Ascend ======= */
-document.getElementById('resetBtn').addEventListener('click', ()=>{
-  if(!confirm(LANG==='en' ? 'Perform Ascension? You gain 1 point per 10,000 total harvested.' : 'Deseja realizar a Ascensão? Você ganha 1 ponto por cada 10.000 mangas totais.')) return;
-  const points = Math.floor(state.totalHarvest / 10000);
-  state = {mango:0,totalHarvest:0,mpc:1,multiplier:1,buildings:{},upgrades:[],achievements:[],ascendPoints:(state.ascendPoints||0)+points,stageIndex:0,lastTick:Date.now()};
-  BUILDINGS.forEach(b=> state.buildings[b.id] = {count:0});
-  state.multiplier *= 1 + (state.ascendPoints * 0.02);
-  save();
-  flash((LANG==='en'?'Ascended +':'Ascendido +') + points);
-  renderAll();
-});
+resetBtn.addEventListener('click', ()=>{ if(!confirm(LANG==='en' ? 'Perform Ascension? You gain 1 point per 10,000 total harvested.' : 'Deseja realizar a Ascensão? Você ganha 1 ponto por cada 10.000 mangas totais.')) return; const points = Math.floor(state.totalHarvest / 10000); state = {mango:0,totalHarvest:0,mpc:1,multiplier:1,buildings:{},upgrades:[],achievements:[],ascendPoints:(state.ascendPoints||0)+points,stageIndex:0,lastTick:Date.now()}; BUILDINGS.forEach(b=> state.buildings[b.id] = {count:0}); state.multiplier *= 1 + (state.ascendPoints * 0.02); doSave(); flash((LANG==='en'?'Ascended +':'Ascendido +') + points); markDirty(); });
 
 /* ======= Stage / background logic ======= */
-function applyBackground(){
-  const idx = Math.max(0, Math.min(IMAGES.length-1, state.stageIndex));
-  const img = IMAGES[idx] || '';
-  if(img) gameEl.style.backgroundImage = `url("${img}")`;
-}
-function updateStageLogic(){
-  let newStage = 0;
-  for(let i=0;i<STAGE_THRESHOLDS.length;i++){
-    if(state.totalHarvest >= STAGE_THRESHOLDS[i]) newStage = i;
-  }
-  if(state.totalHarvest > STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1]){
-    const cycleLen = STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1] * 2;
-    newStage = Math.floor((state.totalHarvest / cycleLen) % IMAGES.length);
-  }
-  if(newStage !== state.stageIndex){
-    state.stageIndex = newStage;
-    playEffect(audioUpgradeEl);
-    flash((LANG==='en'?'Stage changed to ':'Cenário mudou para ') + (state.stageIndex+1));
-    applyBackground();
-  }
-}
+function applyBackground(){ const idx = Math.max(0, Math.min(IMAGES.length-1, state.stageIndex)); const img = IMAGES[idx] || ''; if(img) gameEl.style.backgroundImage = `url("${img}")`; }
+function updateStageLogic(){ let newStage = 0; for(let i=0;i<STAGE_THRESHOLDS.length;i++){ if(state.totalHarvest >= STAGE_THRESHOLDS[i]) newStage = i; } if(state.totalHarvest > STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1]){ const cycleLen = STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1] * 2; newStage = Math.floor((state.totalHarvest / cycleLen) % IMAGES.length); } if(newStage !== state.stageIndex){ state.stageIndex = newStage; playBuffer('upgrade'); flash((LANG==='en'?'Stage changed to ':'Cenário mudou para ') + (state.stageIndex+1)); markDirty(); applyBackground(); } }
 
 /* ======= Toast/Flash ======= */
-function flash(text){
-  const d = document.createElement('div'); d.className='toast'; d.textContent = text;
-  document.body.appendChild(d);
-  setTimeout(()=>{ d.style.transition='all 700ms'; d.style.bottom='64px'; d.style.opacity=0 },700);
-  setTimeout(()=> d.remove(),1500);
-}
+function flash(text){ const d = document.createElement('div'); d.className='toast'; d.textContent = text; document.body.appendChild(d); setTimeout(()=>{ d.style.transition='all 700ms'; d.style.bottom='64px'; d.style.opacity=0 },700); setTimeout(()=> d.remove(),1500); }
 
-/* ======= Interaction & audio controls ======= */
-document.getElementById('langBtn').addEventListener('click', ()=>{
-  LANG = LANG === 'en' ? 'pt' : 'en'; localStorage.setItem('mango_lang', LANG); applyLang(); renderAll();
-});
-function applyLang(){
-  document.getElementById('gameTitle').textContent = STRINGS[LANG].title;
-  document.getElementById('gameTag').textContent = STRINGS[LANG].tag;
-  document.getElementById('buildTitle').textContent = STRINGS[LANG].build;
-  document.getElementById('upgTitle').textContent = STRINGS[LANG].upg;
-  document.getElementById('achTitle').textContent = STRINGS[LANG].ach;
-  document.getElementById('saveBtn').textContent = STRINGS[LANG].save;
-  document.getElementById('exportBtn').textContent = STRINGS[LANG].export;
-  document.getElementById('importBtn').textContent = STRINGS[LANG].imp;
-  document.getElementById('resetBtn').textContent = STRINGS[LANG].asc;
-  document.getElementById('autoSaveText').textContent = STRINGS[LANG].autosaveOn;
-  document.getElementById('bgStageText').textContent = STRINGS[LANG].stage(state.stageIndex+1);
-}
+/* ======= Interaction & language ======= */
+document.getElementById('langBtn').addEventListener('click', ()=>{ LANG = LANG === 'en' ? 'pt' : 'en'; localStorage.setItem('mango_lang', LANG); applyLang(); markDirty(); });
+function applyLang(){ document.getElementById('gameTitle').textContent = STRINGS[LANG].title; document.getElementById('gameTag').textContent = STRINGS[LANG].tag; document.getElementById('buildTitle').textContent = STRINGS[LANG].build; document.getElementById('upgTitle').textContent = STRINGS[LANG].upg; document.getElementById('achTitle').textContent = STRINGS[LANG].ach; document.getElementById('saveBtn').textContent = STRINGS[LANG].save; document.getElementById('exportBtn').textContent = STRINGS[LANG].export; document.getElementById('importBtn').textContent = STRINGS[LANG].imp; document.getElementById('resetBtn').textContent = STRINGS[LANG].asc; document.getElementById('autoSaveText').textContent = STRINGS[LANG].autosaveOn; document.getElementById('bgStageText').textContent = STRINGS[LANG].stage(state.stageIndex+1); }
 applyLang();
 
-/* Ambient toggle and init */
-toggleAmbientBtn.addEventListener('click', ()=>{ toggleAmbient(); });
-volAmbientEl.addEventListener('input', ()=>{ if(audioCtx && ambientGain) ambientGain.gain.value = parseFloat(volAmbientEl.value); });
-volEffectsEl.addEventListener('input', ()=>{ if(audioCtx && effectsGain) effectsGain.gain.value = parseFloat(volEffectsEl.value); });
-
 /* initialize audio on user gesture to comply with autoplay policies */
-document.addEventListener('pointerdown', function startAudioOnce(){
-  if(!audioCtx) initAudio();
-  document.removeEventListener('pointerdown', startAudioOnce);
-});
-
-/* Play effect helper uses WebAudio if available (implemented above) */
-function initAndConnectAudioIfNeeded(){
-  if(!audioCtx) initAudio();
-}
-
-/* convenience wrapper to play effects */
-function playEffect(elem){
-  if(!elem) return;
-  initAndConnectAudioIfNeeded();
-  playEffectFallback(elem);
-}
-/* Because of scoped function naming, use this simple fallback for small browsers */
-function playEffectFallback(elem){
-  // use previously defined playEffect closure (not ideal naming but works)
-  try{
-    // prefer WebAudio approach
-    if(audioCtx) {
-      // use playEffect defined earlier
-      const clone = elem.cloneNode(true);
-      clone.preload = 'auto';
-      clone.volume = 1.0;
-      const src = audioCtx.createMediaElementSource(clone);
-      const panner = audioCtx.createStereoPanner();
-      panner.pan.value = (Math.random()*2 - 1) * 0.4;
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 12000;
-      src.connect(filter);
-      filter.connect(panner);
-      panner.connect(effectsGain);
-      document.body.appendChild(clone);
-      clone.play().catch(()=>{});
-      clone.onended = ()=> clone.remove();
-    } else {
-      elem.currentTime = 0; elem.play().catch(()=>{});
-    }
-  }catch(e){
-    try{ elem.currentTime = 0; elem.play().catch(()=>{}); }catch(err){}
-  }
-}
-
-/* short wrapper for click which uses pitch variance if available */
-function playClick(x){
-  playEffectFallback(audioClickEl);
-}
+document.addEventListener('pointerdown', function startAudioOnce(){ initAudioOnce().then(()=>resumeAudioContext()); document.removeEventListener('pointerdown', startAudioOnce); });
 
 /* ======= Load, render and start ======= */
-load();
-renderAll();
-if(!localStorage.getItem('mango_seen_tutorial')){
-  flash(STRINGS[LANG].tutorial);
-  localStorage.setItem('mango_seen_tutorial','1');
-}
+load(); renderAll(); if(!localStorage.getItem('mango_seen_tutorial')){ flash(STRINGS[LANG].tutorial); localStorage.setItem('mango_seen_tutorial','1'); }
 
 /* Keyboard save */
-window.addEventListener('keydown',(e)=>{ if(e.ctrlKey && e.key==='s'){ e.preventDefault(); save(); } });
+window.addEventListener('keydown',(e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); doSave(); } });
 
 </script>
 </body>
