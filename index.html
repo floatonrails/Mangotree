@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MangoTree — Farmer of Mangos</title>
+<style>
+:root{
+  --accent:#ffb347;
+  --accent2:#ff914d;
+  --panel: rgba(255,255,255,0.06);
+  --glass: rgba(255,255,255,0.03);
+  --ui-shadow: 0 12px 30px rgba(0,0,0,.25);
+  --text-dark:#062f28;
+}
+*{box-sizing:border-box;font-family:Inter, system-ui, -apple-system, 'Trebuchet MS', Roboto, Arial;}
+html,body{height:100%;margin:0;background:#071b18;color:#000;overflow:hidden}
+.game{position:relative;width:100vw;height:100vh;display:grid;grid-template-columns:1fr 380px;gap:18px;padding:18px;background-size:cover;background-position:center;transition:background-image 1.1s ease;}
+.header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center}
+.brand{display:flex;gap:12px;align-items:center}
+.logo{font-size:32px;background:linear-gradient(135deg,var(--accent),#ffd36b);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:var(--ui-shadow)}
+.title h1{margin:0;font-size:18px;color:#000}
+.hud{display:flex;gap:10px;align-items:center}
+.statBox{background:var(--panel);padding:8px 12px;border-radius:10px;min-width:120px;text-align:center}
+.bigNum{font-size:18px;font-weight:800}
+.langToggle{background:transparent;border:1px solid rgba(255,255,255,.06);padding:6px;border-radius:8px;color:#fff;cursor:pointer}
+
+/* Play area */
+.play{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;box-shadow:var(--ui-shadow);display:flex;flex-direction:column;min-height:72vh}
+.scene{position:relative;flex:1;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;transition:background 1s ease}
+.sky{position:relative;height:36%;display:flex;align-items:center;justify-content:space-between;padding:12px}
+.sun{font-size:72px;filter:drop-shadow(0 6px 20px #ffd36b);animation:sunPulse 6s ease-in-out infinite}
+@keyframes sunPulse{0%{transform:scale(1)}50%{transform:scale(1.18)}100%{transform:scale(1)}}
+.birds{font-size:20px;opacity:.95;animation:birdsFly 18s linear infinite}
+@keyframes birdsFly{0%{transform:translateX(-20%)}100%{transform:translateX(120%)}}
+
+.trees{position:absolute;left:6%;bottom:18%;display:flex;gap:18px;pointer-events:none}
+.tree{width:140px;height:180px;border-radius:14px;display:flex;align-items:flex-end;justify-content:center;font-size:56px;transform-origin:center bottom;animation:treeSway 4s ease-in-out infinite}
+@keyframes treeSway{0%{transform:rotate(0deg)}50%{transform:rotate(2deg)}100%{transform:rotate(0deg)}}
+
+.center{position:relative;display:flex;align-items:center;justify-content:center;flex:1}
+.mangoBtn{width:300px;height:300px;border-radius:50%;background:radial-gradient(circle at 30% 25%, #ffd56b 0%, #ff8f4b 60%);display:flex;align-items:center;justify-content:center;font-size:120px;color:#6b2800;box-shadow:0 18px 50px rgba(0,0,0,.32), inset 0 -12px 40px rgba(0,0,0,.08);cursor:pointer;user-select:none;transition:transform .08s}
+.mangoBtn:hover{transform:scale(1.04);filter:drop-shadow(0 16px 40px rgba(255,170,70,.25))}
+.ground{position:absolute;bottom:0;width:100%;text-align:center;font-size:28px;padding:8px 0;background:linear-gradient(180deg, rgba(0,0,0,0.03), rgba(0,0,0,0.05))}
+
+.hudRow{display:flex;gap:12px;align-items:center;padding-top:8px}
+.controls{display:flex;gap:8px}
+.btn{background:linear-gradient(180deg,var(--accent),#ff9f4b);border:none;padding:8px 12px;border-radius:8px;font-weight:700;cursor:pointer}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.06);color:#fff}
+
+/* Sidebar */
+.sidebar{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:8px;box-shadow:var(--ui-shadow);height:calc(100vh - 88px);overflow:auto}
+.building{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:10px;margin-bottom:10px;background:var(--glass)}
+.upgGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.upgrade{background:rgba(255,255,255,0.03);padding:8px;border-radius:8px;font-size:13px}
+.achRow{display:flex;gap:8px;flex-wrap:wrap}
+.ach{background:rgba(255,255,255,0.02);padding:8px;border-radius:8px;font-size:12px;opacity:.7}
+
+.controlsBottom{grid-column:1/-1;display:flex;justify-content:space-between;padding:8px 18px}
+.golden{position:fixed;right:40px;bottom:40px;background:linear-gradient(135deg,#fff4b8,#ffd36b);padding:12px;border-radius:12px;cursor:pointer;box-shadow:0 12px 30px rgba(0,0,0,.18);display:none}
+
+/* Audio UI */
+.audioControls{display:flex;flex-direction:column;gap:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:8px;margin-top:12px}
+.slider{width:100%}
+
+/* Particle */
+.particle{position:fixed;font-size:18px;pointer-events:none;transition:transform 900ms ease, opacity 900ms ease}
+
+/* Notifications */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:rgba(255,255,255,0.95);color:#072d24;padding:8px 12px;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.2);font-weight:700}
+
+@media (max-width:980px){
+  .game{grid-template-columns:1fr;grid-auto-rows:auto;padding:8px}
+  .sidebar{height:auto}
+  .mangoBtn{width:220px;height:220px;font-size:92px}
+}
+</style>
+<body>
+<div id="game" class="game" aria-live="polite">
+  <div class="header">
+    <div class="brand">
+      <div class="logo">🥭</div>
+      <div class="title">
+        <h1 id="gameTitle">MangoTree — Fazenda das Mangas</h1>
+        <small id="gameTag">Clique na manga. Seja o fazeendeiro das Mangas.</small>
+      </div>
+    </div>
+    <div class="hud">
+      <div class="statBox"><div class="small">Mangoes</div><div id="mangoCount" class="bigNum">0</div></div>
+      <div class="statBox"><div class="small">MPS</div><div id="mps" class="bigNum">0</div></div>
+      <button id="langBtn" class="langToggle">PT / EN</button>
+    </div>
+  </div>
+
+  <div class="play">
+    <div id="scene" class="scene">
+      <div class="sky">
+        <div id="sun" class="sun">☀️</div>
+        <div id="birds" class="birds">🐦 🐦</div>
+      </div>
+
+      <div id="trees" class="trees"></div>
+
+      <div class="center">
+        <div id="mangoBtn" class="mangoBtn" title="Click">🥭</div>
+      </div>
+
+      <div class="ground">🌴🌿🌱🌳🌴</div>
+    </div>
+
+    <div class="hudRow">
+      <div class="statBox small"><div>Per Click</div><div id="mpc" class="bigNum">1</div></div>
+      <div class="statBox small"><div>Total Harvested</div><div id="totalHarvest" class="bigNum">0</div></div>
+      <div class="statBox small"><div>Ascension</div><div id="ascPoints" class="bigNum">0</div></div>
+      <div style="flex:1"></div>
+      <div class="controls">
+        <button id="exportBtn" class="btn ghost">Export</button>
+        <button id="importBtn" class="btn ghost">Import</button>
+        <button id="saveBtn" class="btn ghost">Save</button>
+        <button id="resetBtn" class="btn">Ascend</button>
+      </div>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <h3 id="buildTitle">Funcionários & Edifícios</h3>
+    <div id="buildingsList"></div>
+
+    <h3 id="upgTitle">Melhorias</h3>
+    <div id="upgradesList" class="upgGrid"></div>
+
+    <h3 id="achTitle">Conquistas</h3>
+    <div id="achList" class="achRow"></div>
+
+    <div class="audioControls">
+      <div><label>Ambient volume <input id="volAmbient" class="slider" type="range" min="0" max="1" step="0.01" value="0.6"></label></div>
+      <div><label>Effects volume <input id="volEffects" class="slider" type="range" min="0" max="1" step="0.01" value="0.9"></label></div>
+      <div><label>Toggle ambient <button id="toggleAmbient" class="btn ghost">Play</button></label></div>
+    </div>
+  </aside>
+
+  <div class="controlsBottom">
+    <div id="autoSaveText">Autosave: ON</div>
+    <div id="bgStageText">Cenário: 1</div>
+  </div>
+</div>
+
+<div id="golden" class="golden" title="Golden Mango!">✨🥭</div>
+
+<!-- Audio elements (place your files in ./audio/) -->
+<audio id="audioAmbient" loop preload="auto">
+  <source src="./audio/ambient.mp3" type="audio/mpeg">
+  <source src="./audio/ambient.ogg" type="audio/ogg">
+  <source src="./audio/ambient.wav" type="audio/wav">
+</audio>
+<audio id="audioClick" preload="auto">
+  <source src="./audio/click.mp3" type="audio/mpeg">
+  <source src="./audio/click.ogg" type="audio/ogg">
+  <source src="./audio/click.wav" type="audio/wav">
+</audio>
+<audio id="audioUpgrade" preload="auto">
+  <source src="./audio/upgrade.mp3" type="audio/mpeg">
+  <source src="./audio/upgrade.ogg" type="audio/ogg">
+  <source src="./audio/upgrade.wav" type="audio/wav">
+</audio>
+<audio id="audioAchieve" preload="auto">
+  <source src="./audio/achieve.mp3" type="audio/mpeg">
+  <source src="./audio/achieve.ogg" type="audio/ogg">
+  <source src="./audio/achieve.wav" type="audio/wav">
+</audio>
+
+<script>
+/* MangoTree — single file full version
+   You need to place assets in ./img/ and ./audio/
+   Audio accepted formats: .mp3, .ogg, .wav
+*/
+
+/* ======= CONFIG & BALANCE ======= */
+const IMAGES = ['./img/background-1.jpg','./img/background-2.jpg','./img/background-3.jpg'];
+const SAVE_KEY = 'mangotree_final_save_v1';
+let LANG = localStorage.getItem('mango_lang') || 'pt';
+
+const STRINGS = {
+  pt: {
+    title:'MangoTree — Fazenda das Mangas',
+    tag:'Clique na manga. Faça as Mangas.',
+    build:'Funcionários & Edifícios', upg:'Melhorias', ach:'Conquistas',
+    autosaveOn:'Autosave: ON', stage:(n)=>`Cenário: ${n}`,
+    save:'Salvar', export:'Exportar', imp:'Importar', asc:'Ascender', tutorial:'Clique na manga para começar!'
+  },
+  en: {
+    title:'MangoTree — Farmer of Mangoes',
+    tag:'Click the mango. Become a Mango Farmer.',
+    build:'Workers & Buildings', upg:'Upgrades', ach:'Achievements',
+    autosaveOn:'Autosave: ON', stage:(n)=>`Stage: ${n}`,
+    save:'Save', export:'Export', imp:'Import', asc:'Ascend', tutorial:'Click the mango to get started!'
+  }
+};
+
+/* Buildings & upgrades (balanced) */
+const BUILDINGS = [
+  {id:'picker', name_en:'Picker', name_pt:'Colhedor', baseCost:15, baseCps:0.12, icon:'🧑‍🌾'},
+  {id:'farmer', name_en:'Farmhand', name_pt:'Trabalhador', baseCost:120, baseCps:1.4, icon:'👨‍🌾'},
+  {id:'orchard', name_en:'Orchard', name_pt:'Pomar', baseCost:1300, baseCps:9, icon:'🌳'},
+  {id:'farm', name_en:'Tropical Farm', name_pt:'Fazenda Tropical', baseCost:14000, baseCps:48, icon:'🏝️'},
+  {id:'sanct', name_en:'Sanctuary', name_pt:'Santuário', baseCost:160000, baseCps:320, icon:'🏛️'}
+];
+
+const UPGRADES = [
+  {id:'claws', name_en:'Sharp Claws', name_pt:'Garras Afiadas', desc_en:'+1 per click', desc_pt:'+1 por clique', cost:600, apply:s=> s.mpc += 1},
+  {id:'baskets', name_en:'Large Baskets', name_pt:'Cestos Grandes', desc_en:'+3 per click', desc_pt:'+3 por clique', cost:3000, apply:s=> s.mpc += 3},
+  {id:'fert', name_en:'Ancestral Fertilizer', name_pt:'Fertilizante Ancestral', desc_en:'x2 production', desc_pt:'x2 produção', cost:8000, apply:s=> s.multiplier *= 2},
+  {id:'irrig', name_en:'Irrigation Runes', name_pt:'Runas de Irrigação', desc_en:'+20% production', desc_pt:'+20% produção', cost:25000, apply:s=> s.multiplier *= 1.2}
+];
+
+const ACHIEVEMENTS = [
+  {id:'first', name_en:'First Bite', name_pt:'Primeira Mordida', desc_en:'Click for the first time', desc_pt:'Clique pela primeira vez', check:s=> s.totalHarvest>=1},
+  {id:'hundred', name_en:'Century', name_pt:'Cem', desc_en:'Harvest 100 mangoes', desc_pt:'Colete 100 mangas', check:s=> s.totalHarvest>=100},
+  {id:'farmhand', name_en:'Employers', name_pt:'Empregadores', desc_en:'Hire 10 farmhands', desc_pt:'Contrate 10 trabalhadores', check:s=> (s.buildings['farmer'] && s.buildings['farmer'].count>=10)},
+  {id:'million', name_en:'Mango Magnate', name_pt:'Magnata das Mangas', desc_en:'Harvest 1,000,000', desc_pt:'Colete 1.000.000 mangas', check:s=> s.totalHarvest>=1000000}
+];
+
+/* Stage thresholds for backgrounds */
+const STAGE_THRESHOLDS = [0, 1000, 20000, 200000];
+
+/* ======= STATE ======= */
+let state = {
+  mango:0,
+  totalHarvest:0,
+  mpc:1,
+  multiplier:1,
+  buildings:{},
+  upgrades:[],
+  achievements:[],
+  ascendPoints:0,
+  stageIndex:0,
+  lastTick: Date.now()
+};
+BUILDINGS.forEach(b => state.buildings[b.id] = {count:0});
+
+/* ======= DOM refs ======= */
+const gameEl = document.getElementById('game');
+const mangoBtn = document.getElementById('mangoBtn');
+const mangoCountEl = document.getElementById('mangoCount');
+const mpsEl = document.getElementById('mps');
+const mpcEl = document.getElementById('mpc');
+const totalHarvestEl = document.getElementById('totalHarvest');
+const ascEl = document.getElementById('ascPoints');
+const treesEl = document.getElementById('trees');
+const buildingsList = document.getElementById('buildingsList');
+const upgradesList = document.getElementById('upgradesList');
+const achList = document.getElementById('achList');
+const exportBtn = document.getElementById('exportBtn');
+const importBtn = document.getElementById('importBtn');
+const saveBtn = document.getElementById('saveBtn');
+const resetBtn = document.getElementById('resetBtn');
+const autoSaveText = document.getElementById('autoSaveText');
+const langBtn = document.getElementById('langBtn');
+const gameTitleEl = document.getElementById('gameTitle');
+const gameTagEl = document.getElementById('gameTag');
+const buildTitleEl = document.getElementById('buildTitle');
+const upgTitleEl = document.getElementById('upgTitle');
+const achTitleEl = document.getElementById('achTitle');
+const bgStageText = document.getElementById('bgStageText');
+const goldenEl = document.getElementById('golden');
+const sceneEl = document.getElementById('scene');
+const volAmbientEl = document.getElementById('volAmbient');
+const volEffectsEl = document.getElementById('volEffects');
+const toggleAmbientBtn = document.getElementById('toggleAmbient');
+
+/* Audio elements and WebAudio graph */
+const audioAmbientEl = document.getElementById('audioAmbient');
+const audioClickEl = document.getElementById('audioClick');
+const audioUpgradeEl = document.getElementById('audioUpgrade');
+const audioAchieveEl = document.getElementById('audioAchieve');
+
+let audioCtx, masterGain, ambientGain, effectsGain;
+let ambientSource;
+
+/* ======= AUDIO SETUP (Web Audio with simple effects) ======= */
+function initAudio(){
+  try{
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    ambientGain = audioCtx.createGain();
+    effectsGain = audioCtx.createGain();
+    // connect
+    masterGain.gain.value = 0.9;
+    ambientGain.gain.value = parseFloat(volAmbientEl.value);
+    effectsGain.gain.value = parseFloat(volEffectsEl.value);
+    ambientGain.connect(masterGain);
+    effectsGain.connect(masterGain);
+    masterGain.connect(audioCtx.destination);
+
+    // create media element source for ambient
+    if(audioAmbientEl && audioAmbientEl.src){
+      ambientSource = audioCtx.createMediaElementSource(audioAmbientEl);
+      ambientSource.connect(ambientGain);
+      // slight lowpass on ambient for warmth
+      const ambientFilter = audioCtx.createBiquadFilter();
+      ambientFilter.type = 'lowpass';
+      ambientFilter.frequency.value = 8000;
+      ambientSource.connect(ambientFilter);
+      ambientFilter.connect(ambientGain);
+    }
+    // Attach volumes for effects via simple wrapper playSound()
+  }catch(e){
+    console.warn('AudioContext not available:', e);
+  }
+}
+
+/* Play an effect via AudioContext with envelope/pan */
+function playEffect(elem){
+  if(!elem) return;
+  // if no audioCtx, fallback to element play
+  if(!audioCtx){
+    try{ elem.currentTime = 0; elem.play(); }catch(e){}
+    return;
+  }
+  // create media element source on the fly to control playbackRate/pan via cloning
+  // Use HTMLMediaElement directly but route to effectsGain for volume control
+  try{
+    const clone = elem.cloneNode(true);
+    clone.preload = 'auto';
+    clone.volume = 1.0;
+    // create source
+    const src = audioCtx.createMediaElementSource(clone);
+    // panner
+    const panner = audioCtx.createStereoPanner();
+    panner.pan.value = (Math.random()*2 - 1) * 0.3; // slight stereo spread
+    // filter for small warmth
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 12000;
+    src.connect(filter);
+    filter.connect(panner);
+    panner.connect(effectsGain);
+    clone.play().catch(()=>{ /* autoplay blocked until gesture */ });
+    // remove element after end
+    clone.onended = ()=>{ try{ clone.remove(); }catch(e){} };
+    // append to DOM temporarily so it can play in some browsers
+    document.body.appendChild(clone);
+  }catch(e){
+    try{ elem.currentTime = 0; elem.play(); }catch(e){}
+  }
+}
+
+/* Ambient control */
+let ambientPlaying = false;
+function toggleAmbient(){
+  if(!audioAmbientEl) return;
+  if(!audioCtx) initAudio();
+  if(!ambientPlaying){
+    audioAmbientEl.play().catch(()=>{});
+    ambientPlaying = true;
+    toggleAmbientBtn.textContent = LANG === 'en' ? 'Pause' : 'Pausar';
+  } else {
+    audioAmbientEl.pause();
+    ambientPlaying = false;
+    toggleAmbientBtn.textContent = LANG === 'en' ? 'Play' : 'Tocar';
+  }
+}
+
+/* volume sliders */
+volAmbientEl.addEventListener('input', ()=>{ if(ambientGain) ambientGain.gain.value = parseFloat(volAmbientEl.value); });
+volEffectsEl.addEventListener('input', ()=>{ if(effectsGain) effectsGain.gain.value = parseFloat(volEffectsEl.value); });
+
+/* start ambient on first user gesture */
+function startAmbientOnFirstGesture(){
+  if(!audioCtx) initAudio();
+  document.removeEventListener('pointerdown', startAmbientOnFirstGesture);
+}
+document.addEventListener('pointerdown', startAmbientOnFirstGesture, {once:true});
+
+/* ======= UTIL ======= */
+function fmt(n){
+  if(n>=1e9) return (n/1e9).toFixed(2)+'B';
+  if(n>=1e6) return (n/1e6).toFixed(2)+'M';
+  if(n>=1e3) return (n/1e3).toFixed(2)+'k';
+  return Math.floor(n).toString();
+}
+
+/* ======= RENDER ======= */
+function renderTrees(){
+  treesEl.innerHTML = '';
+  const count = Math.min(6, 1 + Math.floor(state.totalHarvest / 750));
+  for(let i=0;i<count;i++){
+    const div = document.createElement('div');
+    div.className = 'tree';
+    const size = 46 + (i%3)*8;
+    div.style.fontSize = size + 'px';
+    div.style.left = (i*140) + 'px';
+    div.textContent = '🌳';
+    treesEl.appendChild(div);
+  }
+}
+function renderBuildings(){
+  buildingsList.innerHTML = '';
+  BUILDINGS.forEach(def=>{
+    const have = state.buildings[def.id].count || 0;
+    const cost = getBuildingCost(def, have);
+    const wrapper = document.createElement('div'); wrapper.className = 'building';
+    wrapper.innerHTML = `
+      <div>
+        <div style="font-weight:800">${def.icon} ${LANG==='en'?def.name_en:def.name_pt}</div>
+        <small class="small">${def.baseCps} mangoes/s each</small>
+      </div>
+      <div style="text-align:right">
+        <div class="small">Cost: <strong>${fmt(cost)}</strong></div>
+        <div style="margin-top:8px"><button class="btn" data-buy="${def.id}" data-cost="${cost}">${LANG==='en'?'Buy':'Comprar'}</button></div>
+        <div style="margin-top:8px" class="small">Owned: <strong>${have}</strong></div>
+      </div>
+    `;
+    buildingsList.appendChild(wrapper);
+  });
+}
+function renderUpgrades(){
+  upgradesList.innerHTML = '';
+  UPGRADES.forEach(u=>{
+    if(state.upgrades.includes(u.id)) return;
+    const el = document.createElement('div'); el.className='upgrade';
+    el.innerHTML = `<div style="font-weight:700">${LANG==='en'?u.name_en:u.name_pt}</div><div class="small">${LANG==='en'?u.desc_en:u.desc_pt}</div><div style="margin-top:6px"><button class="btn" data-upgrade="${u.id}" data-cost="${u.cost}">${fmt(u.cost)}</button></div>`;
+    upgradesList.appendChild(el);
+  });
+}
+function renderAchievements(){
+  achList.innerHTML = '';
+  ACHIEVEMENTS.forEach(a=>{
+    const have = state.achievements.includes(a.id);
+    const el = document.createElement('div'); el.className='ach';
+    el.style.opacity = have ? 1 : 0.45;
+    el.innerHTML = `<div style="font-weight:700">${LANG==='en'?a.name_en:a.name_pt}</div><div class="small">${LANG==='en'?a.desc_en:a.desc_pt}</div>`;
+    achList.appendChild(el);
+  });
+}
+function renderHUD(){
+  document.getElementById('mangoCount').textContent = fmt(Math.floor(state.mango));
+  document.getElementById('mps').textContent = computeCps().toFixed(2);
+  document.getElementById('mpc').textContent = Math.floor(state.mpc * state.multiplier);
+  document.getElementById('totalHarvest').textContent = fmt(Math.floor(state.totalHarvest));
+  document.getElementById('ascPoints').textContent = state.ascendPoints;
+  document.getElementById('bgStageText').textContent = STRINGS[LANG].stage(state.stageIndex+1);
+}
+function renderAll(){
+  renderTrees(); renderBuildings(); renderUpgrades(); renderAchievements(); renderHUD(); applyBackground();
+}
+
+/* ======= MECHANICS ======= */
+function getBuildingCost(def, have){
+  return Math.floor(def.baseCost * Math.pow(1.15, have));
+}
+function computeCps(){
+  let cps = 0;
+  BUILDINGS.forEach(b=> cps += b.baseCps * (state.buildings[b.id].count || 0));
+  cps *= state.multiplier;
+  return cps;
+}
+
+/* Purchase handlers */
+document.addEventListener('click', (e)=>{
+  const buy = e.target.closest('[data-buy]');
+  if(buy){
+    const id = buy.getAttribute('data-buy');
+    buyBuilding(id);
+    renderAll();
+  }
+  const up = e.target.closest('[data-upgrade]');
+  if(up){
+    const id = up.getAttribute('data-upgrade');
+    buyUpgrade(id);
+    renderAll();
+  }
+});
+function buyBuilding(id){
+  const def = BUILDINGS.find(x=>x.id===id);
+  const have = state.buildings[id].count || 0;
+  const cost = getBuildingCost(def, have);
+  if(state.mango >= cost){
+    state.mango -= cost;
+    state.buildings[id].count++;
+    playEffect(audioUpgradeEl);
+    flash( (LANG==='en' ? def.name_en : def.name_pt) + ' bought' );
+  } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes');
+}
+function buyUpgrade(id){
+  const u = UPGRADES.find(x=>x.id===id);
+  if(!u) return;
+  if(state.mango >= u.cost){
+    state.mango -= u.cost;
+    state.upgrades.push(u.id);
+    u.apply(state);
+    playEffect(audioUpgradeEl);
+    flash(LANG==='en' ? 'Upgrade acquired' : 'Melhoria adquirida');
+  } else flash(LANG==='en' ? 'Not enough mangoes' : 'Mangas insuficientes');
+}
+
+/* Click mango */
+mangoBtn.addEventListener('click', (ev)=>{
+  const gain = state.mpc * state.multiplier;
+  state.mango += gain;
+  state.totalHarvest += gain;
+  spawnParticles(ev.clientX, ev.clientY, 14);
+  playClick(ev.clientX);
+  checkAchievements();
+  maybeSpawnGolden();
+  renderAll();
+});
+
+/* Particles */
+function spawnParticles(x,y,n=8){
+  const emojis = ['🥭','🌿','🌸','🍃','🌺','✨'];
+  for(let i=0;i<n;i++){
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.left = x + (Math.random()*120 - 60) + 'px';
+    p.style.top = y + (Math.random()*80 - 40) + 'px';
+    p.textContent = emojis[Math.floor(Math.random()*emojis.length)];
+    p.style.fontSize = (12 + Math.random()*28) + 'px';
+    document.body.appendChild(p);
+    setTimeout(()=>{ p.style.transform = `translate(${Math.random()*80-40}px, ${-140 - Math.random()*80}px) rotate(${Math.random()*360}deg)`; p.style.opacity = 0; }, 20);
+    setTimeout(()=> p.remove(), 1200);
+  }
+}
+
+/* Click sound with small pitch variance & simple envelope */
+function playClick(x){
+  if(audioCtx){
+    // use playEffect which clones audio element and routes through effectsGain
+    playEffect(audioClickEl);
+  } else {
+    try{ audioClickEl.currentTime = 0; audioClickEl.play(); }catch(e){}
+  }
+}
+
+/* Golden mango */
+function maybeSpawnGolden(){
+  if(Math.random() < 0.06){
+    goldenEl.style.display = 'block';
+    setTimeout(()=> goldenEl.style.display = 'none', 11000);
+  }
+}
+goldenEl.addEventListener('click', ()=>{
+  const bonus = Math.max(50, Math.floor(state.totalHarvest * 0.02));
+  state.mango += bonus;
+  playEffect(audioAchieveEl);
+  flash((LANG==='en'?'Golden mango! +':'Manga dourada! +') + bonus);
+  goldenEl.style.display = 'none';
+  renderAll();
+});
+
+/* ======= Tick & Offline ======= */
+let last = Date.now();
+function tick(){
+  const now = Date.now();
+  const dt = (now - last) / 1000; last = now;
+  const cps = computeCps();
+  const gain = cps * dt;
+  state.mango += gain;
+  state.totalHarvest += gain;
+  checkAchievements();
+  updateStageLogic();
+  renderHUD();
+}
+setInterval(tick, 1000);
+
+/* Offline gain loader */
+function load(){
+  const raw = localStorage.getItem(SAVE_KEY);
+  if(!raw) return;
+  try{
+    const s = JSON.parse(raw);
+    state = Object.assign(state, s);
+    BUILDINGS.forEach(b => state.buildings[b.id] = state.buildings[b.id] || {count:0});
+    const now = Date.now();
+    const dt = Math.max(0, (now - (state.lastTick||now))/1000);
+    const offlineGain = computeCps() * dt;
+    if(offlineGain > 0){
+      state.mango += offlineGain;
+      state.totalHarvest += offlineGain;
+      flash((LANG==='en'?'Offline gain: ':'Ganho offline: ') + Math.floor(offlineGain));
+    }
+  }catch(e){ console.error(e); }
+}
+
+/* Save & export/import */
+function save(){
+  state.lastTick = Date.now();
+  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  flash(LANG==='en' ? 'Saved' : 'Salvo');
+}
+document.getElementById('saveBtn').addEventListener('click', save);
+setInterval(save, 9000);
+
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const txt = localStorage.getItem(SAVE_KEY) || JSON.stringify(state);
+  const blob = new Blob([txt], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'mangotree_save.json'; a.click(); URL.revokeObjectURL(url);
+});
+document.getElementById('importBtn').addEventListener('click', ()=>{
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = ()=> {
+    const f = inp.files[0];
+    const r = new FileReader();
+    r.onload = ()=> { try{ localStorage.setItem(SAVE_KEY, r.result); flash(LANG==='en'?'Imported':'Importado'); location.reload(); }catch(e){ alert('Invalid file'); } };
+    r.readAsText(f);
+  }; inp.click();
+});
+
+/* ======= Achievements & checks ======= */
+function checkAchievements(){
+  ACHIEVEMENTS.forEach(a=>{
+    if(!state.achievements.includes(a.id) && a.check(state)){
+      state.achievements.push(a.id);
+      playEffect(audioAchieveEl);
+      flash((LANG==='en'?a.name_en:a.name_pt) + ' unlocked!');
+    }
+  });
+}
+
+/* ======= Ascend ======= */
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  if(!confirm(LANG==='en' ? 'Perform Ascension? You gain 1 point per 10,000 total harvested.' : 'Deseja realizar a Ascensão? Você ganha 1 ponto por cada 10.000 mangas totais.')) return;
+  const points = Math.floor(state.totalHarvest / 10000);
+  state = {mango:0,totalHarvest:0,mpc:1,multiplier:1,buildings:{},upgrades:[],achievements:[],ascendPoints:(state.ascendPoints||0)+points,stageIndex:0,lastTick:Date.now()};
+  BUILDINGS.forEach(b=> state.buildings[b.id] = {count:0});
+  state.multiplier *= 1 + (state.ascendPoints * 0.02);
+  save();
+  flash((LANG==='en'?'Ascended +':'Ascendido +') + points);
+  renderAll();
+});
+
+/* ======= Stage / background logic ======= */
+function applyBackground(){
+  const idx = Math.max(0, Math.min(IMAGES.length-1, state.stageIndex));
+  const img = IMAGES[idx] || '';
+  if(img) gameEl.style.backgroundImage = `url("${img}")`;
+}
+function updateStageLogic(){
+  let newStage = 0;
+  for(let i=0;i<STAGE_THRESHOLDS.length;i++){
+    if(state.totalHarvest >= STAGE_THRESHOLDS[i]) newStage = i;
+  }
+  if(state.totalHarvest > STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1]){
+    const cycleLen = STAGE_THRESHOLDS[STAGE_THRESHOLDS.length-1] * 2;
+    newStage = Math.floor((state.totalHarvest / cycleLen) % IMAGES.length);
+  }
+  if(newStage !== state.stageIndex){
+    state.stageIndex = newStage;
+    playEffect(audioUpgradeEl);
+    flash((LANG==='en'?'Stage changed to ':'Cenário mudou para ') + (state.stageIndex+1));
+    applyBackground();
+  }
+}
+
+/* ======= Toast/Flash ======= */
+function flash(text){
+  const d = document.createElement('div'); d.className='toast'; d.textContent = text;
+  document.body.appendChild(d);
+  setTimeout(()=>{ d.style.transition='all 700ms'; d.style.bottom='64px'; d.style.opacity=0 },700);
+  setTimeout(()=> d.remove(),1500);
+}
+
+/* ======= Interaction & audio controls ======= */
+document.getElementById('langBtn').addEventListener('click', ()=>{
+  LANG = LANG === 'en' ? 'pt' : 'en'; localStorage.setItem('mango_lang', LANG); applyLang(); renderAll();
+});
+function applyLang(){
+  document.getElementById('gameTitle').textContent = STRINGS[LANG].title;
+  document.getElementById('gameTag').textContent = STRINGS[LANG].tag;
+  document.getElementById('buildTitle').textContent = STRINGS[LANG].build;
+  document.getElementById('upgTitle').textContent = STRINGS[LANG].upg;
+  document.getElementById('achTitle').textContent = STRINGS[LANG].ach;
+  document.getElementById('saveBtn').textContent = STRINGS[LANG].save;
+  document.getElementById('exportBtn').textContent = STRINGS[LANG].export;
+  document.getElementById('importBtn').textContent = STRINGS[LANG].imp;
+  document.getElementById('resetBtn').textContent = STRINGS[LANG].asc;
+  document.getElementById('autoSaveText').textContent = STRINGS[LANG].autosaveOn;
+  document.getElementById('bgStageText').textContent = STRINGS[LANG].stage(state.stageIndex+1);
+}
+applyLang();
+
+/* Ambient toggle and init */
+toggleAmbientBtn.addEventListener('click', ()=>{ toggleAmbient(); });
+volAmbientEl.addEventListener('input', ()=>{ if(audioCtx && ambientGain) ambientGain.gain.value = parseFloat(volAmbientEl.value); });
+volEffectsEl.addEventListener('input', ()=>{ if(audioCtx && effectsGain) effectsGain.gain.value = parseFloat(volEffectsEl.value); });
+
+/* initialize audio on user gesture to comply with autoplay policies */
+document.addEventListener('pointerdown', function startAudioOnce(){
+  if(!audioCtx) initAudio();
+  document.removeEventListener('pointerdown', startAudioOnce);
+});
+
+/* Play effect helper uses WebAudio if available (implemented above) */
+function initAndConnectAudioIfNeeded(){
+  if(!audioCtx) initAudio();
+}
+
+/* convenience wrapper to play effects */
+function playEffect(elem){
+  if(!elem) return;
+  initAndConnectAudioIfNeeded();
+  playEffectFallback(elem);
+}
+/* Because of scoped function naming, use this simple fallback for small browsers */
+function playEffectFallback(elem){
+  // use previously defined playEffect closure (not ideal naming but works)
+  try{
+    // prefer WebAudio approach
+    if(audioCtx) {
+      // use playEffect defined earlier
+      const clone = elem.cloneNode(true);
+      clone.preload = 'auto';
+      clone.volume = 1.0;
+      const src = audioCtx.createMediaElementSource(clone);
+      const panner = audioCtx.createStereoPanner();
+      panner.pan.value = (Math.random()*2 - 1) * 0.4;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 12000;
+      src.connect(filter);
+      filter.connect(panner);
+      panner.connect(effectsGain);
+      document.body.appendChild(clone);
+      clone.play().catch(()=>{});
+      clone.onended = ()=> clone.remove();
+    } else {
+      elem.currentTime = 0; elem.play().catch(()=>{});
+    }
+  }catch(e){
+    try{ elem.currentTime = 0; elem.play().catch(()=>{}); }catch(err){}
+  }
+}
+
+/* short wrapper for click which uses pitch variance if available */
+function playClick(x){
+  playEffectFallback(audioClickEl);
+}
+
+/* ======= Load, render and start ======= */
+load();
+renderAll();
+if(!localStorage.getItem('mango_seen_tutorial')){
+  flash(STRINGS[LANG].tutorial);
+  localStorage.setItem('mango_seen_tutorial','1');
+}
+
+/* Keyboard save */
+window.addEventListener('keydown',(e)=>{ if(e.ctrlKey && e.key==='s'){ e.preventDefault(); save(); } });
+
+</script>
+</body>
+</html>
